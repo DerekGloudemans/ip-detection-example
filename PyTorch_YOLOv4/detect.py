@@ -34,8 +34,9 @@ def detect(img,cfg,weights):
     augment = True
     agnostic_nms = True
     
-    device = torch.device("cuda:0") if torch.cuda.is_available else torch.device("cpu")
-
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+    if not torch.cuda.is_available():
+        print("No GPU available, using CPU instead")
     
     im0 = img.copy()
     img = torch.from_numpy(img) / 255.0
@@ -45,27 +46,30 @@ def detect(img,cfg,weights):
     img = img[:trunc*(img.shape[0]//trunc),:trunc*(img.shape[1]//trunc),:]
     
     img = img.permute((2,0,1)).unsqueeze(0).to(device)
-    print(img.shape)
-
     
     # Initialize
     
     # Load model
-    model = Darknet(cfg, img.shape).cuda()
+    model = Darknet(cfg, img.shape)
+    
     try:
-        model.load_state_dict(torch.load(weights, map_location=device)['model'])
+        model.load_state_dict(torch.load(weights)['model'])
         #model = attempt_load(weights, map_location=device)  # load FP32 model
         #imgsz = check_img_size(imgsz, s=model.stride.max())  # check img_size
     except:
         load_darknet_weights(model, weights)
-    model.to(device).eval()
+        
+    model = model.cuda()
+    model.eval()
 
+    torch.cuda.empty_cache()
+    
     # Second-stage classifier
     classify = False
     if classify:
         modelc = load_classifier(name='resnet101', n=2)  # initialize
-        modelc.load_state_dict(torch.load('weights/resnet101.pt', map_location=device)['model'])  # load weights
-        modelc.to(device).eval()
+        #modelc.load_state_dict(torch.load('weights/resnet101.pt', map_location=device)['model'])  # load weights
+        modelc.cuda().eval()
 
 
 
@@ -74,7 +78,8 @@ def detect(img,cfg,weights):
     
     # Inference
     t1 = time_synchronized()
-    pred = model(img, augment=augment)[0]
+    with torch.no_grad():
+        pred = model(img, augment=augment)[0]
 
     # Apply NMS
     pred = non_max_suppression(pred, conf_thresh, iou_thresh,  agnostic=agnostic_nms)
@@ -82,9 +87,10 @@ def detect(img,cfg,weights):
 
     # Apply Classifier
     if classify:
-        pred = apply_classifier(pred, modelc, img, im0s)
+        with torch.no_grad():
+            pred = apply_classifier(pred, modelc, img, im0)
 
-    return pred#,names
+    return pred #,names
 
 
 if __name__ == '__main__':
